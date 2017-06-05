@@ -1,3 +1,6 @@
+# top-secret-government-battle-simulations
+## Top Secrete Simulations of Battles for the Military (aka. simulating the game of RISK)
+
 
 This code aims to computationally study the statistics of risk in order to develop better strategies and beat the brothers at the game. Before beginning a computational study, it is advantegeous to develop the mathematical theory. 
 
