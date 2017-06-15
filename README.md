@@ -1,6 +1,3 @@
-# top-secret-government-battle-simulations
-## Top Secrete Simulations of Battles for the Military (aka. simulating the game of RISK)
-
 
 This code aims to computationally study the statistics of risk in order to develop better strategies and beat the brothers at the game. Before beginning a computational study, it is advantegeous to develop the mathematical theory. 
 
@@ -207,16 +204,26 @@ class Player:
         self.dice = dice
         self.npeople = number_of_people
         self.initial_people = number_of_people
+        self.history = []
 
     def roll(self):
         return self.dice.roll()
 
     def ready(self, opponent):
         return True
-
+    
+    def delta(self, dp):
+        self.npeople += dp
+        self.history.append(self.npeople)
+    
     def reset(self):
         self.npeople = self.initial_people
+        self.history = []
         self.dice.reset()
+    
+    @property
+    def minmen(self):
+        pass
 
 class Attacker(Player):
     def roll(self):
@@ -228,36 +235,31 @@ class Attacker(Player):
 
     def ready(self, opponent):
         return self.npeople > 1
+    
+    @property
+    def minmen(self):
+        return 1
 
 class Defender(Player):
     def ready(self, opponent):
         return self.npeople > 0
-
-```
-
-Finally, an interface to simulating a face off between two armies, here dubbed an *offensive*:
-
-
-```python
-class Offensive:
-    def __init__(self, attacker, defender, toprint=False):
-        self.a = attacker
-        self.d = defender
-        self.toprint = toprint
-        self.niter = 0
-        self.menA = []
-        self.menD = []
-
-    def extension(self,rollA, rollD):
-        return np.array([0,0])
-
+    
+    @property
+    def minmen(self):
+        return 0
+    
+class ClassicBattleContract:
+    def __init__(self, a, d):
+        self.a = a 
+        self.d = d
+        
     def compareDice(self, diceA, diceD):
         if diceA > diceD:
             return (0,-1)
         elif diceA <= diceD:
             return (-1,0)
-
-    def standardBattleContract(self, rolla, rolld):
+    
+    def losses(self, rolla, rolld):
         minind = min(len(rolla), len(rolld))
         aligneda = rolla[:minind]
         alignedd = rolld[:minind]
@@ -270,6 +272,30 @@ class Offensive:
             lossA += c[0]
             lossD += c[1]
         return np.array([lossA, lossD])
+    
+    def reset(self):
+        self.a.reset()
+        self.d.reset()
+    
+    def canIterate(self):
+        can= self.a.ready(self.d) and self.d.ready(self.a)
+        return can
+    
+    def didWin(self):
+        return self.d.npeople==0
+```
+
+Finally, an interface to simulating a face off between two armies, here dubbed an *offensive*:
+
+
+```python
+class Offensive:
+    def __init__(self, battlecontract, toprint=False):
+        self.toprint = toprint
+        self.niter = 0
+        self.battlecontract = battlecontract
+        self.a = battlecontract.a
+        self.d = battlecontract.d
 
     def show(self, loss, rolla, rolld):
         lossA, lossD = loss
@@ -286,51 +312,46 @@ class Offensive:
         print "D: {}".format(self.d.npeople)
         print "------------------"
 
-    def didWin(self):
-        return self.d.npeople==0
-
-    def canIterate(self):
-        can= self.a.ready(self.d) and self.d.ready(self.a)
-        return can
-
     def iterate(self):
         rolld = self.d.roll()
         rolla = self.a.roll()
-        loss = self.extension(rolla, rolld) \
-                + self.standardBattleContract(rolla, rolld)
-        self.a.npeople += loss[0]
-        self.d.npeople += loss[1]
+        loss = self.battlecontract.losses(rolla, rolld)
+        self.a.delta(loss[0])
+        self.d.delta(loss[1])
+        
         if self.toprint:
             self.show(loss, rolla,rolld)
-        self.menA.append(self.a.npeople)
-        self.menD.append(self.d.npeople)
+ 
         self.niter+=1
 
     def reset(self):
-        self.a.reset()
-        self.d.reset()
+        self.battlecontract.reset()
         self.niter = 0
-        self.menA = []
-        self.menD = []
 
     def simulate(self):
-        while self.canIterate():
+        while self.battlecontract.canIterate():
             self.iterate()
 
         return self.a.npeople, self.d.npeople
+
 ```
 
 We invented some custom rules in my house, so we'll add them here
 
 
 ```python
-class LipshitzianOffensive(Offensive):
-    def extension(self, rollA, rollD):
+class LipshitzianContract(ClassicBattleContract):
+    def __init__(self, *args,  **kwargs):
+        return ClassicBattleContract.__init__(self, *args, **kwargs)
+    
+    def losses(self, rollA, rollD):
+        stdlosses = ClassicBattleContract.losses(self, rollA, rollD)
         allgreater = min(rollD) >= max(rollA)
         if allgreater:
-            return np.array([-1,0])
+            x = np.array([-1,0])
         else:
-            return np.array([0,0])
+            x = np.array([0,0])
+        return stdlosses + x
 ```
 
 Finally we can simulate
@@ -338,9 +359,10 @@ Finally we can simulate
 
 ```python
 T = 100
-battle = LipshitzianOffensive(
-    Attacker(Dice(6,3), 70),
-    Defender(Dice(6,2), 60),
+battle = Offensive(
+    LipshitzianContract(
+        Attacker(Dice(6,3), 70),
+        Defender(Dice(6,2), 60)),
     toprint=False)
 
 resA = []
@@ -349,8 +371,8 @@ histA = []
 histD = []
 for i in range(T):
     ra, rd = battle.simulate()
-    histA.append(battle.menA)
-    histD.append(battle.menD)
+    histA.append(battle.a.history)
+    histD.append(battle.d.history)
     resA.append(ra)
     resD.append(rd)
     battle.reset()
@@ -418,15 +440,152 @@ import networkx as nx
 
 
 ```python
+WEIGHT_REGULAR = 10
+WEIGHT_CONTINENT = 11
 class Board(nx.Graph):
-    def edge(a, b):
-        self.add_edge(a,b)
+    def bridge(self, a, b):
+        return self.surround(a,b)
+    def surround(self, a, *args):
+        bs = args
+        for b in bs:
+            self.add_edge(a,b)
         return self
-board = Board()
-```
+    def group(self,  *args, **kwargs):
+        weight = kwargs.pop('weight', False)
+        for a in args:
+            for b in args:
+                if a != b:
+                    if weight:
+                        self.add_edge(a,b, weight=weight)
+                    else:
+                        self.add_edge(a,b)
+        return self
+    
+    
+board = Board()\
+.surround("Alaska",
+          "Kamatchka",
+          "Northwestern Territory",
+          "Alberta")\
+.surround("Northwestern Territory",
+          "Alberta", 
+          "Ontario",
+          "Greenland", 
+          "Alaska")\
+.surround("Western United States", 
+          "Alberta",
+          "Ontario", 
+          "Eastern United States", 
+          "Central America")\
+.surround("Ontario", 
+          "Northwestern Territory",
+          "Alberta", 
+          "Western United States", 
+          "Eastern Canada", 
+          "Eastern United States", 
+          "Greenland")\
+.surround("Eastern Canada", 
+          "Ontario",
+          "Eastern United States", 
+          "Greenland")\
+.surround("Eastern United States", 
+          "Eastern Canada", 
+          "Ontario",
+          "Western United States", 
+          "Central America")\
+.bridge("Central America", 
+          "Venezuela")\
+.group(
+    "Venezuela", "Brazil", "Peru")\
+.group(
+    "Peru",
+    "Argentina", 
+    "Brazil")\
+.bridge("Brazil",
+        "North Africa")\
+.bridge("Greenland", 
+        "Iceland")\
+.group(
+    "Iceland", "Scandinavia", "Great Britain")\
+.bridge("Great Britain", 
+        "Northern Europe")\
+.surround("Scandinavia", 
+          "Russia", 
+          "Northern Europe")\
+.group(
+    "Northern Europe", "Southern Europe", "Western Europe")\
+.group(
+    "Northern Europe","Southern Europe", "Russia")\
+.bridge("Western Europe", 
+        "North Africa")\
+.group(
+    "North Africa", "Egypt", "East Africa")\
+.surround("North Africa", 
+          "Central Africa", 
+          "Brazil")\
+.surround("East Africa", 
+          "Middle East", 
+          "Central Africa")\
+.group(
+    "Central Africa", "East Africa", "North Africa")\
+.group(
+    "Central Africa", "East Africa", "South Africa")\
+.surround("Madagascar", 
+          "East Africa", 
+          "South Africa")
 
+board.surround("Middle East", 
+               "Russia", 
+               "Southern Europe",
+               "Egypt", 
+               "East Africa", 
+               "India", 
+               "Afghanistan" )\
+.surround("Afghanistan",
+         "Russia",
+         "Ural",
+         "India",
+         "China",
+         "Middle East")\
+.surround("China", 
+         "India",
+         "Southern Asia",
+         "Afghanistan",
+         "Mongolia", 
+         "Ural",
+         "Siberia")\
+.surround("Mongolia",
+          "China",
+         "Irkutsk",
+         "Siberia",
+         "Japan",
+         "Kamatchka")\
+.surround("Irkutsk",
+         "Mongolia",
+         "Kamatchka",
+         "Yakutsk",
+         "Siberia")\
+.surround("Siberia",
+         "Ural",
+         "Irkutsk",
+         "Yakutsk")\
+.surround("Ural",
+         "Russia",
+         "Afghanistan",
+         "China",
+         "Siberia")\
+.surround("India",
+         "Middle East",
+         "Afghanistan",
+         "China",
+         "Southern Asia")\
+.bridge("Japan", "Mongolia").bridge("Japan", "Kamatchka")\
+.surround("Kamatchka", "Yakutsk", "Irkutsk", "Japan", "Alaska")\
+.bridge("Southern Asia", "Indonesia")\
+.surround("Indonesia", "New Guinea", "Western Australia")\
+.surround("Western Australia", "Indonesia", "Eastern Australia", "New Guinea")\
+.surround("New Guinea", "Indonesia", "Eastern Australia", "Western Australia")
 
-```python
 Map = {
     "North America":[
         "Alaska",
@@ -469,7 +628,7 @@ Map = {
         "Irkutsk",
         "Siberia",
         "Yakutsk",
-        "Kamachatka",
+        "Kamatchka",
         "Japan"],
     "Australia":[
         "Indonesia",
@@ -478,22 +637,135 @@ Map = {
         "Eastern Australia"
         ]
 }
+
+for cont, counts in Map.iteritems():
+    board.group(*counts, weight=WEIGHT_CONTINENT)
 ```
 
 
 ```python
-for k, v in Map.iteritems():
-    print "{}: {} countries".format(k,len(v))
-    map(board.add_node, v)
+map_inverse = {v2:k for k,v1 in Map.iteritems() for v2 in v1 }
+map_inverse
 ```
 
-    Europe: 7 countries
-    Australia: 4 countries
-    Africa: 6 countries
-    Asia: 12 countries
-    North America: 9 countries
-    South America: 4 countries
 
+
+
+    {'Afghanistan': 'Asia',
+     'Alaska': 'North America',
+     'Alberta': 'North America',
+     'Argentina': 'South America',
+     'Brazil': 'South America',
+     'Central Africa': 'Africa',
+     'Central America': 'North America',
+     'China': 'Asia',
+     'East Africa': 'Africa',
+     'Eastern Australia': 'Australia',
+     'Eastern Canada': 'North America',
+     'Eastern United States': 'North America',
+     'Egypt': 'Africa',
+     'Great Britain': 'Europe',
+     'Greenland': 'North America',
+     'Iceland': 'Europe',
+     'India': 'Asia',
+     'Indonesia': 'Australia',
+     'Irkutsk': 'Asia',
+     'Japan': 'Asia',
+     'Kamatchka': 'Asia',
+     'Madagascar': 'Africa',
+     'Middle East': 'Asia',
+     'Mongolia': 'Asia',
+     'New Guinea': 'Australia',
+     'North Africa': 'Africa',
+     'Northern Europe': 'Europe',
+     'Northwestern Territory': 'North America',
+     'Ontario': 'North America',
+     'Peru': 'South America',
+     'Russia': 'Europe',
+     'Scandinavia': 'Europe',
+     'Siberia': 'Asia',
+     'South Africa': 'Africa',
+     'Southern Asia': 'Asia',
+     'Southern Europe': 'Europe',
+     'Ural': 'Asia',
+     'Venezuela': 'South America',
+     'Western Australia': 'Australia',
+     'Western Europe': 'Europe',
+     'Western United States': 'North America',
+     'Yakutsk': 'Asia'}
+
+
+
+
+```python
+import matplotlib.cm as cm
+import matplotlib as mpl
+groups = set(Map.keys())
+N = len(groups)
+groupint = range(N)
+group_to_color = {k: i for i, k in enumerate(Map.keys())}
+
+cmap = cm.jet
+# extract all colors from the .jet map
+cmaplist = [cmap(i) for i in range(cmap.N)]
+# force the first color entry to be grey
+cmaplist[0] = (.5,.5,.5,1.0)
+# create the new map
+cmap = cmap.from_list('Custom cmap', cmaplist, cmap.N)
+
+bounds = np.linspace(0,N,N+1)
+
+norm = mpl.colors.BoundaryNorm(bounds, cmap.N)
+```
+
+
+```python
+map_inverse["Iceland"]
+```
+
+
+
+
+    'Europe'
+
+
+
+
+```python
+colors = [group_to_color[map_inverse[node]] for node in board.nodes() ]
+```
+
+
+```python
+fig, ax = plt.subplots(1, figsize=(10,10))
+fig.suptitle("Risk Gameboard")
+pos = nx.spring_layout(board)
+nx.draw_networkx(board, pos = pos, ax=ax, node_color=colors, node_size=300, font_size=12)
+```
+
+
+![png](Risk%20Battle%20Simulation_files/Risk%20Battle%20Simulation_32_0.png)
+
+
+
+```python
+import pickle as pick
+```
+
+
+```python
+with open("./risk_board.pickle", "w") as writeto:
+    pick.dump(board, writeto)
+```
+
+## Drift Diffusion Model For Decision Making in Risk
+
+The game of Risk offers a nice opportunity for me to develop my idea of drift diffusion models for discrete decision making and see if they can produce (1) human like irrational predecisional information distortion, and (2) superhuman abilities. 
+
+The difficulty is the sample space is virtually infinite. There are a huge number of possible moves that can be made at any turn. 
+
+(1) Monte Carlo Sampling
+(2)  
 
 
 ```python
